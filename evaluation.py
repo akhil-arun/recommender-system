@@ -213,10 +213,10 @@ def evaluate_featureaware_model(
         rank = np.where(ranking == 0)[0][0] + 1  # 1-based
 
         # accumulate
-        hits.append( hit_at_k(rank, k) )
-        ndcgs.append( ndcg_at_k(rank, k) )
-        mrrs.append( mrr(rank) )
-        aps.append( average_precision(rank) )
+        hits.append(hit_at_k(rank, k))
+        ndcgs.append(ndcg_at_k(rank, k))
+        mrrs.append(mrr(rank) )
+        aps.append(average_precision(rank))
 
     return {
         f"Hit@{k}": np.mean(hits),
