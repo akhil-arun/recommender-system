@@ -44,9 +44,6 @@ class BiasedMF(nn.Module):
         return self.global_bias + self.user_bias(user_idx).squeeze(1) \
             + self.movie_bias(movie_idx).squeeze(1) + interaction
 
-import torch
-import torch.nn as nn
-
 
 class MatrixFactorization(nn.Module):
     """Matrix Factorization model for collaborative filtering.
@@ -116,4 +113,41 @@ class DeepMF(nn.Module):
         u = self.user_embeddings(user_ids)
         v = self.item_embeddings(item_ids)
         x = torch.cat([u, v], dim=-1)
+        return self.mlp(x).squeeze()
+
+
+class FeatureAwareDeepMF(nn.Module):
+    """DeepMF model with user/item features, using float year and age."""
+
+    def __init__(self, num_users, num_items, num_genders, num_occs, num_genres, emb_dim):
+        super().__init__()
+        self.user_embeddings = nn.Embedding(num_users, emb_dim)
+        self.item_embeddings = nn.Embedding(num_items, emb_dim)
+
+        self.gender_emb = nn.Embedding(num_genders, 4)
+        self.occ_emb = nn.Embedding(num_occs, emb_dim)
+        self.genre_emb = nn.Embedding(num_genres, emb_dim)  # multi-hot projection
+
+        # Inputs: 5 vectors (emb_dim) + 4 (gender) + 2 floats (age, year)
+        mlp_input_dim = (4 * emb_dim) + 4 + 2
+        self.mlp = nn.Sequential(
+            nn.Linear(mlp_input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, user_ids, item_ids, gender_ids, occ_ids,
+                year_vals, age_vals, genre_vecs):
+        u = self.user_embeddings(user_ids)
+        i = self.item_embeddings(item_ids)
+        gender = self.gender_emb(gender_ids)
+        occ = self.occ_emb(occ_ids)
+        genre_proj = genre_vecs @ self.genre_emb.weight  # [B, emb_dim]
+
+        year_vals = year_vals.unsqueeze(1)  # [B, 1]
+        age_vals = age_vals.unsqueeze(1)    # [B, 1]
+
+        x = torch.cat([u, i, occ, gender, genre_proj, year_vals, age_vals], dim=-1)
         return self.mlp(x).squeeze()

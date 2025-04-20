@@ -1,5 +1,4 @@
 from pathlib import Path
-from collections import defaultdict
 import pandas as pd
 import numpy as np
 import random
@@ -64,15 +63,17 @@ def clean_and_filter(ratings, users, movies, rating_threshold=4):
     ratings = ratings[ratings["Rating"] >= rating_threshold].reset_index(
         drop=True
     )
+    valid_ids = set(users["UserID"])
+    ratings = ratings[ratings["UserID"].isin(valid_ids)].copy()
     ratings["Datetime"] = pd.to_datetime(ratings["Timestamp"], unit="s")
     # Make MovieID and UserID into dense indices
     movie2idx = {mid: i for i, mid in enumerate(sorted(movies["MovieID"].unique()))}
     user2idx = {uid: i for i, uid in enumerate(sorted(users["UserID"].unique()))}
     movies["MovieID"] = movies["MovieID"].map(movie2idx)
-    users["UserID"]   = users["UserID"].map(user2idx)
-    ratings["UserID"]  = ratings["UserID"].map(user2idx)
+    users["UserID"] = users["UserID"].map(user2idx)
+    ratings["UserID"] = ratings["UserID"].map(user2idx)
     ratings["MovieID"] = ratings["MovieID"].map(movie2idx)
-    
+
     return ratings, users, movies
 
 
@@ -140,7 +141,8 @@ def sample_unseen(user_seq, global_movie_set, K=5):
         list: A list of K unseen movie_ids.
     """
     unseen = list(global_movie_set - set(user_seq))
-    return random.sample(unseen, K) if len(unseen) >= K else unseen
+    ret = random.sample(unseen, K) if len(unseen) >= K else unseen
+    return [int(x) for x in ret]
 
 
 def build_examples(user_splits, global_movie_set, K=5, split="train"):
@@ -214,40 +216,56 @@ def pad_sequences(examples, max_len=50, pad_val=0):
 
 
 def build_user_table(users):
-    """
-    Build a user feature table.
-
-    Args:
-        users (DataFrame): The users DataFrame.
-
-    Returns:
-        DataFrame: The transformed user feature table.
-    """
-    age_map = {
-        1: "Under 18", 18: "18-24", 25: "25-34", 35: "35-44",
-        45: "45-49", 50: "50-55", 56: "56+"
-    }
     df = users.copy()
-    df["AgeBucket"] = df["Age"].map(age_map)
-    df = df.drop("Zip-code", axis=1)
-    return pd.get_dummies(df, columns=["Gender", "Occupation"],
-                          prefix=["Gender", "Occ"])
+    # Gender vocab
+    gender_vocab = {g: i for i, g in enumerate(df["Gender"].unique())}
+
+    # Occupation vocab
+    occ_vocab = {o: i for i, o in enumerate(sorted(df["Occupation"].unique()))}
+
+    # Normalize age
+    min_age, max_age = df["Age"].min(), df["Age"].max()
+
+    # Build user_feat
+    user_feat = {}
+    for _, row in df.iterrows():
+        uid = row["UserID"]
+        gender_id = gender_vocab[row["Gender"]]
+        occ_id = occ_vocab[row["Occupation"]]
+        age_val = (row["Age"] - min_age) / (max_age - min_age)
+        user_feat[uid] = (occ_id, age_val, gender_id)
+    return user_feat, gender_vocab, occ_vocab
 
 
 def build_movie_table(movies):
-    """
-    Build a movie feature table.
-
-    Args:
-        movies (DataFrame): The movies DataFrame.
-
-    Returns:
-        DataFrame: The transformed movie feature table.
-    """
     df = movies.copy()
-    # multi-hot genres
-    genre_dummies = df["Genres"].str.get_dummies(sep="|")
-    df = df.drop("Genres", axis=1).join(genre_dummies)
-    # extract year
+    # Genre vocab
+    all_genres = set()
+    for g in df["Genres"]:
+        all_genres.update(g.split("|"))
+    genre_vocab = {g: i for i, g in enumerate(sorted(all_genres))}
+
+    # Normalize year
     df[["Title", "Year"]] = df["Title"].str.extract(r'^(.*) \((\d{4})\)$')
-    return df
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
+
+    # 3. Impute missing years with the median
+    median_year = int(df["Year"].median(skipna=True))
+    df["Year"] = df["Year"].fillna(median_year).astype(int)
+
+    # 4. Compute min/max for normalization
+    min_year = int(df["Year"].min())
+    max_year = int(df["Year"].max())
+
+    # Build movie feature dicts
+    movie_genre_vec = {}
+    movie_year = {}
+
+    for _, row in df.iterrows():
+        mid = row["MovieID"]
+        genre_ids = [genre_vocab[g] for g in row["Genres"].split("|")]
+        vec = np.zeros(len(genre_vocab), dtype="float32")
+        vec[genre_ids] = 1.0
+        movie_genre_vec[mid] = vec
+        movie_year[mid] = (row["Year"] - min_year) / (max_year - min_year)
+    return movie_genre_vec, movie_year, genre_vocab

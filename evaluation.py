@@ -150,3 +150,77 @@ def evaluate_ranking_model(
         "MRR": np.mean(mrrs),
         "MAP": np.mean(aps)
     }
+
+
+def evaluate_featureaware_model(
+    model: torch.nn.Module,
+    user_splits: dict,
+    global_items: set,
+    user_feat: dict,
+    movie_genre_vec: dict,
+    movie_year: dict,
+    device: torch.device,
+    *,
+    candidate_size: int = 100,
+    k: int = 10,
+    negative_sampler=uniform_negative_sampler
+) -> dict:
+    """Evaluate FeatureAwareDeepMF: pulls occ, age, gender, year and genre for each candidate."""
+    model.eval()
+    hits, ndcgs, mrrs, aps = [], [], [], []
+    
+    for user, (train_seq, val_seq, test_seq) in user_splits.items():
+        if not test_seq:
+            continue
+
+        # prefix & positive
+        prefix = train_seq + val_seq
+        pos_item = test_seq[0]
+
+        # negatives
+        negs = negative_sampler(prefix, global_items - {pos_item}, candidate_size - 1)
+        candidates = [pos_item] + negs
+
+        # build feature lists
+        occ_id, age_val, gender_id = user_feat[user]
+        user_ids   = [user] * candidate_size
+        gender_ids = [gender_id] * candidate_size
+        occ_ids    = [occ_id] * candidate_size
+        age_vals   = [age_val] * candidate_size
+        year_vals  = [movie_year[mid] for mid in candidates]
+        genre_vecs = [movie_genre_vec[mid] for mid in candidates]
+
+        # to tensors
+        users_t   = torch.tensor(user_ids,   dtype=torch.long,   device=device)
+        items_t   = torch.tensor(candidates, dtype=torch.long,   device=device)
+        genders_t = torch.tensor(gender_ids, dtype=torch.long,   device=device)
+        occs_t    = torch.tensor(occ_ids,    dtype=torch.long,   device=device)
+        years_t   = torch.tensor(year_vals,  dtype=torch.float,  device=device)
+        ages_t    = torch.tensor(age_vals,   dtype=torch.float,  device=device)
+        genres_t  = torch.stack([torch.tensor(v, dtype=torch.float) for v in genre_vecs], dim=0).to(device)
+
+        # forward
+        with torch.no_grad():
+            scores = model(
+                users_t, items_t,
+                genders_t, occs_t,
+                years_t, ages_t,
+                genres_t
+            ).cpu().numpy()
+
+        # compute ranking
+        ranking = np.argsort(-scores)
+        rank = np.where(ranking == 0)[0][0] + 1  # 1-based
+
+        # accumulate
+        hits.append( hit_at_k(rank, k) )
+        ndcgs.append( ndcg_at_k(rank, k) )
+        mrrs.append( mrr(rank) )
+        aps.append( average_precision(rank) )
+
+    return {
+        f"Hit@{k}": np.mean(hits),
+        f"NDCG@{k}": np.mean(ndcgs),
+        "MRR": np.mean(mrrs),
+        "MAP": np.mean(aps)
+    }
