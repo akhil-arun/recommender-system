@@ -55,3 +55,34 @@ class MFTrainDataset(Dataset):
             # just take the first negative
             torch.tensor(neg[0], dtype=torch.long)
         )
+
+
+class BiasedMFDataset(Dataset):
+    def __init__(self, examples, user_feat, movie_genre_vec):
+        self.exs = examples
+        self.uf = user_feat
+        self.mg = movie_genre_vec
+
+    def __len__(self):
+        return len(self.exs)
+
+    def __getitem__(self, i):
+        ex = self.exs[i]
+        u = ex["UserID"]
+        pos = ex["positive"]
+        neg = ex["negatives"][0]
+
+        occ, age, gender = self.uf[u]
+        genre_pos = self.mg[pos]
+        genre_neg = self.mg[neg]
+
+        return (
+            torch.tensor(u,      dtype=torch.long),
+            torch.tensor(pos,    dtype=torch.long),
+            torch.tensor(neg,    dtype=torch.long),
+            torch.tensor(occ,    dtype=torch.long),
+            torch.tensor(age,    dtype=torch.long),
+            torch.tensor(gender, dtype=torch.long),
+            torch.tensor(genre_pos, dtype=torch.float),
+            torch.tensor(genre_neg, dtype=torch.float),
+        )

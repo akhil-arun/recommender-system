@@ -21,14 +21,12 @@ class BiasedMF(nn.Module):
         self.global_bias = nn.Parameter(torch.zeros(1))
 
         # Initialize weights: Model immediately overfits
-        """
         nn.init.xavier_uniform_(self.user_emb.weight)
         nn.init.xavier_uniform_(self.movie_emb.weight)
         nn.init.xavier_uniform_(self.age_emb.weight)
         nn.init.xavier_uniform_(self.gender_emb.weight)
         nn.init.xavier_uniform_(self.genre_emb.weight)
         nn.init.xavier_uniform_(self.occ_emb.weight)
-        """
 
     def forward(self, user_idx, movie_idx, occ_idx, age_idx, gender_idx, genre_vec):
         """Compute predicted ratings for a batch of user-item pairs."""
@@ -45,3 +43,77 @@ class BiasedMF(nn.Module):
         # Final prediction
         return self.global_bias + self.user_bias(user_idx).squeeze(1) \
             + self.movie_bias(movie_idx).squeeze(1) + interaction
+
+import torch
+import torch.nn as nn
+
+
+class MatrixFactorization(nn.Module):
+    """Matrix Factorization model for collaborative filtering.
+
+    This model learns user and item embeddings to predict user-item interactions.
+    """
+
+    def __init__(self, num_users: int, num_items: int, embedding_dim: int):
+        """Initialize the MatrixFactorization model.
+
+        Args:
+            num_users (int): Number of users.
+            num_items (int): Number of items.
+            embedding_dim (int): Dimension of the embedding vectors.
+        """
+        super().__init__()
+        self.user_embeddings = nn.Embedding(num_users, embedding_dim)
+        self.item_embeddings = nn.Embedding(num_items, embedding_dim)
+
+    def forward(self, user_idx, item_idx):
+        """Forward pass for the model.
+
+        Args:
+            user_idx (torch.Tensor): Tensor of user indices.
+            item_idx (torch.Tensor): Tensor of item indices.
+
+        Returns:
+            torch.Tensor: Predicted interaction scores for the given user-item pairs.
+        """
+        u = self.user_embeddings(user_idx)
+        v = self.item_embeddings(item_idx)
+        return (u * v).sum(dim=1)
+
+
+class DeepMF(nn.Module):
+    """Deep Matrix Factorization with an MLP-based interaction model."""
+
+    def __init__(self, num_users, num_items, emb_dim):
+        """Initialize the DeepMF model.
+
+        Args:
+            num_users (int): Number of users.
+            num_items (int): Number of items.
+            emb_dim (int): Dimension of the embedding vectors.
+        """
+        super().__init__()
+        self.user_embeddings = nn.Embedding(num_users, emb_dim)
+        self.item_embeddings = nn.Embedding(num_items, emb_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(2 * emb_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, user_ids, item_ids):
+        """Forward pass for the model.
+
+        Args:
+            user_ids (torch.Tensor): Tensor of user indices.
+            item_ids (torch.Tensor): Tensor of item indices.
+
+        Returns:
+            torch.Tensor: Predicted interaction scores.
+        """
+        u = self.user_embeddings(user_ids)
+        v = self.item_embeddings(item_ids)
+        x = torch.cat([u, v], dim=-1)
+        return self.mlp(x).squeeze()

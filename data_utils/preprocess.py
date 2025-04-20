@@ -1,4 +1,5 @@
 from pathlib import Path
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 import random
@@ -64,6 +65,14 @@ def clean_and_filter(ratings, users, movies, rating_threshold=4):
         drop=True
     )
     ratings["Datetime"] = pd.to_datetime(ratings["Timestamp"], unit="s")
+    # Make MovieID and UserID into dense indices
+    movie2idx = {mid: i for i, mid in enumerate(sorted(movies["MovieID"].unique()))}
+    user2idx = {uid: i for i, uid in enumerate(sorted(users["UserID"].unique()))}
+    movies["MovieID"] = movies["MovieID"].map(movie2idx)
+    users["UserID"]   = users["UserID"].map(user2idx)
+    ratings["UserID"]  = ratings["UserID"].map(user2idx)
+    ratings["MovieID"] = ratings["MovieID"].map(movie2idx)
+    
     return ratings, users, movies
 
 
@@ -148,12 +157,18 @@ def build_examples(user_splits, global_movie_set, K=5, split="train"):
 
     Returns:
         list: A list of examples containing prefix, positive, and negatives.
+         - User
+         - prefix: The sequence of movie_ids seen by the user before the target.
+         - positive: The target movie_id.
+         - negatives: A list of K unseen movie_ids.
     """
     examples = []
     for u, (train_seq, val_seq, test_seq) in user_splits.items():
         # pick the right sequence
         seq = {"train": train_seq, "val": val_seq, "test": test_seq}[split]
         # choose starting index
+        # In training, you need at least two past items to form a prefix (so start = 2).
+        # In validation/test, you allow prefixes of length ≥1 (so start = 1).
         start = 2 if split == "train" else 1
         if len(seq) < start + 1:
             continue
