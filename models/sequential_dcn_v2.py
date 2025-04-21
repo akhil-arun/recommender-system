@@ -59,9 +59,10 @@ class DCNV2_Sequential(nn.Module):
     def forward(self, sparse_input, dense_input):
         embedding_list = []
         for name in sparse_input.keys():
-            embedding_list.append(self.sparse_embeddings[name](name))
+            # shape: [batch, embed_dim]
+            embedding_list.append(self.sparse_embeddings[name](sparse_input[name]))
         dense_embeddings = torch.cat([dense_input, torch.cat(embedding_list, -1)], -1)
         cl_output = self.cross_network(dense_embeddings)
         dl_output = self.deep_network(cl_output)
         output = self.final_linear_layer(dl_output)
-        return output
+        return output.squeeze()
