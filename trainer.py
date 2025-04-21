@@ -16,11 +16,12 @@ class Trainer:
     def train_epoch(self):
         self.model.train()
         total_loss = 0
-        for sparse, target in tqdm(self.train_loader):
-            sparse = sparse.to(self.cfg.train.device)
+        for sparse, dense, target in tqdm(self.train_loader):
+            # sparse = sparse.to(self.cfg.train.device)
+            dense = dense.to(self.cfg.train.device)
             target = target.to(self.cfg.train.device)
 
-            pred = self.model(sparse)
+            pred = self.model(sparse, dense)
             loss = F.binary_cross_entropy(pred, target)
 
             self.optimizer.zero_grad()
@@ -34,11 +35,12 @@ class Trainer:
         self.model.eval()
         total_loss = 0
         with torch.no_grad():
-            for sparse, target in tqdm(self.train_loader):
-                sparse = sparse.to(self.cfg.train.device)
+            for sparse, dense, target in tqdm(self.train_loader):
+                # sparse = sparse.to(self.cfg.train.device)
+                dense = dense.to(self.cfg.train.device)
                 target = target.to(self.cfg.train.device)
 
-                pred = self.model(sparse)
+                pred = self.model(sparse, dense)
                 loss = F.binary_cross_entropy(pred, target)
                 total_loss += loss.item()
         return total_loss / len(self.val_loader)
