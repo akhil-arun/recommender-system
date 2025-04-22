@@ -154,7 +154,7 @@ def evaluate_ranking_model(
         all_mrrs.append(np.mean(mrrs))
         all_aps.append(np.mean(aps))
 
-    
+    # Mean and Std. Deviation over all trials
     return {
         f"Hit@{k}": np.mean(all_hits),
         f"Hit@{k} Std": np.std(all_hits),
