@@ -89,7 +89,8 @@ def evaluate_ranking_model(
     *,
     candidate_size: int = 100,
     k: int = 10,
-    negative_sampler=uniform_negative_sampler
+    negative_sampler=uniform_negative_sampler,
+    trials: int = 10
 ) -> dict:
     """Evaluate a ranking model.
 
@@ -104,51 +105,65 @@ def evaluate_ranking_model(
         k (int, optional): Cutoff for Hit@k and NDCG@k. Defaults to 10.
         negative_sampler (function, optional): Function to sample negative IDs.
                                                Defaults to uniform_negative_sampler.
+        trials (int, optional): Number of trials for averaging. Defaults to 10.
 
     Returns:
         dict: Dictionary with averaged metrics: Hit@k, NDCG@k, MRR, MAP.
     """
     model.eval()
-    hits, ndcgs, mrrs, aps = [], [], [], []
+    all_hits, all_ndcgs, all_mrrs, all_aps = [], [], [], []
+    
+    for _ in range(trials):
+        hits, ndcgs, mrrs, aps = [], [], [], []
 
-    for user, (train_seq, val_seq, test_seq) in user_splits.items():
-        if not test_seq:
-            continue
+        for user, (train_seq, val_seq, test_seq) in user_splits.items():
+            if not test_seq:
+                continue
 
-        # 1) Build the “prefix” and the held‑out positive item
-        prefix = train_seq + val_seq
-        pos_item = test_seq[0]
+            # 1) Build the “prefix” and the held‑out positive item
+            prefix = train_seq + val_seq
+            pos_item = test_seq[0]
 
-        # 2) Sample negatives
-        negs = negative_sampler(prefix, global_items - {pos_item},
-                                candidate_size - 1)
+            # 2) Sample negatives
+            negs = negative_sampler(prefix, global_items - {pos_item},
+                                    candidate_size - 1)
 
-        # 3) Build candidate list
-        candidates = [pos_item] + negs
+            # 3) Build candidate list
+            candidates = [pos_item] + negs
 
-        # 4) Score all candidates in one forward pass
-        users_t = torch.tensor([user] * candidate_size, dtype=torch.long,
-                               device=device)
-        items_t = torch.tensor(candidates, dtype=torch.long, device=device)
-        with torch.no_grad():
-            scores = model(users_t, items_t).cpu().numpy()
+            # 4) Score all candidates in one forward pass
+            users_t = torch.tensor([user] * candidate_size, dtype=torch.long,
+                                device=device)
+            items_t = torch.tensor(candidates, dtype=torch.long, device=device)
+            with torch.no_grad():
+                scores = model(users_t, items_t).cpu().numpy()
 
-        # 5) Compute the rank of the positive item (index 0 before sorting)
-        ranking = np.argsort(-scores)
-        rank = np.where(ranking == 0)[0][0] + 1  # 1‑based
+            # 5) Compute the rank of the positive item (index 0 before sorting)
+            ranking = np.argsort(-scores)
+            rank = np.where(ranking == 0)[0][0] + 1  # 1‑based
 
-        # 6) Accumulate metrics
-        hits.append(hit_at_k(rank, k))
-        ndcgs.append(ndcg_at_k(rank, k))
-        mrrs.append(mrr(rank))
-        aps.append(average_precision(rank))
+            # 6) Accumulate metrics
+            hits.append(hit_at_k(rank, k))
+            ndcgs.append(ndcg_at_k(rank, k))
+            mrrs.append(mrr(rank))
+            aps.append(average_precision(rank))
+        
+        # 7) Average over all users
+        all_hits.append(np.mean(hits))
+        all_ndcgs.append(np.mean(ndcgs))
+        all_mrrs.append(np.mean(mrrs))
+        all_aps.append(np.mean(aps))
 
-    # 7) Return average over all users
+    # Mean and Std. Deviation over all trials
     return {
-        f"Hit@{k}": np.mean(hits),
-        f"NDCG@{k}": np.mean(ndcgs),
-        "MRR": np.mean(mrrs),
-        "MAP": np.mean(aps)
+        f"Hit@{k}": np.mean(all_hits),
+        f"Hit@{k} Std": np.std(all_hits),
+        f"NDCG@{k}": np.mean(all_ndcgs),
+        f"NDCG@{k} Std": np.std(all_ndcgs),
+        "MRR": np.mean(all_mrrs),
+        "MRR Std": np.std(all_mrrs),
+        "MAP": np.mean(all_aps),
+        "MAP Std": np.std(all_aps)
     }
 
 
@@ -163,64 +178,77 @@ def evaluate_featureaware_model(
     *,
     candidate_size: int = 100,
     k: int = 10,
-    negative_sampler=uniform_negative_sampler
+    negative_sampler=uniform_negative_sampler,
+    trials: int = 10
 ) -> dict:
     """Evaluate FeatureAwareDeepMF: pulls occ, age, gender, year and genre for each candidate."""
     model.eval()
-    hits, ndcgs, mrrs, aps = [], [], [], []
+    all_hits, all_ndcgs, all_mrrs, all_aps = [], [], [], []
     
-    for user, (train_seq, val_seq, test_seq) in user_splits.items():
-        if not test_seq:
-            continue
+    for _ in range(trials):
+        hits, ndcgs, mrrs, aps = [], [], [], []
+        
+        for user, (train_seq, val_seq, test_seq) in user_splits.items():
+            if not test_seq:
+                continue
 
-        # prefix & positive
-        prefix = train_seq + val_seq
-        pos_item = test_seq[0]
+            # prefix & positive
+            prefix = train_seq + val_seq
+            pos_item = test_seq[0]
 
-        # negatives
-        negs = negative_sampler(prefix, global_items - {pos_item}, candidate_size - 1)
-        candidates = [pos_item] + negs
+            # negatives
+            negs = negative_sampler(prefix, global_items - {pos_item}, candidate_size - 1)
+            candidates = [pos_item] + negs
 
-        # build feature lists
-        occ_id, age_val, gender_id = user_feat[user]
-        user_ids   = [user] * candidate_size
-        gender_ids = [gender_id] * candidate_size
-        occ_ids    = [occ_id] * candidate_size
-        age_vals   = [age_val] * candidate_size
-        year_vals  = [movie_year[mid] for mid in candidates]
-        genre_vecs = [movie_genre_vec[mid] for mid in candidates]
+            # build feature lists
+            occ_id, age_val, gender_id = user_feat[user]
+            user_ids   = [user] * candidate_size
+            gender_ids = [gender_id] * candidate_size
+            occ_ids    = [occ_id] * candidate_size
+            age_vals   = [age_val] * candidate_size
+            year_vals  = [movie_year[mid] for mid in candidates]
+            genre_vecs = [movie_genre_vec[mid] for mid in candidates]
 
-        # to tensors
-        users_t   = torch.tensor(user_ids,   dtype=torch.long,   device=device)
-        items_t   = torch.tensor(candidates, dtype=torch.long,   device=device)
-        genders_t = torch.tensor(gender_ids, dtype=torch.long,   device=device)
-        occs_t    = torch.tensor(occ_ids,    dtype=torch.long,   device=device)
-        years_t   = torch.tensor(year_vals,  dtype=torch.float,  device=device)
-        ages_t    = torch.tensor(age_vals,   dtype=torch.float,  device=device)
-        genres_t  = torch.stack([torch.tensor(v, dtype=torch.float) for v in genre_vecs], dim=0).to(device)
+            # to tensors
+            users_t   = torch.tensor(user_ids,   dtype=torch.long,   device=device)
+            items_t   = torch.tensor(candidates, dtype=torch.long,   device=device)
+            genders_t = torch.tensor(gender_ids, dtype=torch.long,   device=device)
+            occs_t    = torch.tensor(occ_ids,    dtype=torch.long,   device=device)
+            years_t   = torch.tensor(year_vals,  dtype=torch.float,  device=device)
+            ages_t    = torch.tensor(age_vals,   dtype=torch.float,  device=device)
+            genres_t  = torch.stack([torch.tensor(v, dtype=torch.float) for v in genre_vecs], dim=0).to(device)
 
-        # forward
-        with torch.no_grad():
-            scores = model(
-                users_t, items_t,
-                genders_t, occs_t,
-                years_t, ages_t,
-                genres_t
-            ).cpu().numpy()
+            # forward
+            with torch.no_grad():
+                scores = model(
+                    users_t, items_t,
+                    genders_t, occs_t,
+                    years_t, ages_t,
+                    genres_t
+                ).cpu().numpy()
 
-        # compute ranking
-        ranking = np.argsort(-scores)
-        rank = np.where(ranking == 0)[0][0] + 1  # 1-based
+            # compute ranking
+            ranking = np.argsort(-scores)
+            rank = np.where(ranking == 0)[0][0] + 1  # 1-based
 
-        # accumulate
-        hits.append(hit_at_k(rank, k))
-        ndcgs.append(ndcg_at_k(rank, k))
-        mrrs.append(mrr(rank) )
-        aps.append(average_precision(rank))
+            # accumulate
+            hits.append(hit_at_k(rank, k))
+            ndcgs.append(ndcg_at_k(rank, k))
+            mrrs.append(mrr(rank) )
+            aps.append(average_precision(rank))
+        
+        all_hits.append(np.mean(hits))
+        all_ndcgs.append(np.mean(ndcgs))
+        all_mrrs.append(np.mean(mrrs))
+        all_aps.append(np.mean(aps))
 
     return {
-        f"Hit@{k}": np.mean(hits),
-        f"NDCG@{k}": np.mean(ndcgs),
-        "MRR": np.mean(mrrs),
-        "MAP": np.mean(aps)
+        f"Hit@{k}": np.mean(all_hits),
+        f"Hit@{k} Std": np.std(all_hits),
+        f"NDCG@{k}": np.mean(all_ndcgs),
+        f"NDCG@{k} Std": np.std(all_ndcgs),
+        "MRR": np.mean(all_mrrs),
+        "MRR Std": np.std(all_mrrs),
+        "MAP": np.mean(all_aps),
+        "MAP Std": np.std(all_aps)
     }
