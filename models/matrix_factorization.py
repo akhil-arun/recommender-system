@@ -93,11 +93,11 @@ class DeepMF(nn.Module):
         self.user_embeddings = nn.Embedding(num_users, emb_dim)
         self.item_embeddings = nn.Embedding(num_items, emb_dim)
         self.mlp = nn.Sequential(
-            nn.Linear(2 * emb_dim, 128),
+            nn.Linear(2 * emb_dim, 32),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(32, 16),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(16, 1)
         )
 
     def forward(self, user_ids, item_ids):
@@ -133,9 +133,11 @@ class FeatureAwareDeepMF(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(mlp_input_dim, 128),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Dropout(0.3),
+            nn.Linear(64, 1),
         )
 
     def forward(self, user_ids, item_ids, gender_ids, occ_ids,
