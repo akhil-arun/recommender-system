@@ -1,7 +1,7 @@
 from models.sequential_dcn_v2 import DCNV2_Sequential
 from models.vanilla_nn import TwoLayerNet
 from trainer import Trainer
-from dataset import CustomDataset
+from data_utils.datasets import CustomDataset
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import argparse
