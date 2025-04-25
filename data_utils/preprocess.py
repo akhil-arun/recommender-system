@@ -145,7 +145,7 @@ def sample_unseen(user_seq, global_movie_set, K=5):
     return [int(x) for x in ret]
 
 
-def build_examples(user_splits, global_movie_set, K=5, split="train"):
+def build_examples(user_splits, global_movie_set, K=5, split="train", already_picked_negatives={}):
     """
     Build examples for the specified split.
 
@@ -163,8 +163,10 @@ def build_examples(user_splits, global_movie_set, K=5, split="train"):
          - prefix: The sequence of movie_ids seen by the user before the target.
          - positive: The target movie_id.
          - negatives: A list of K unseen movie_ids.
+         already_picked_negatives
     """
     examples = []
+    global_movie_set = global_movie_set-already_picked_negatives
     for u, (train_seq, val_seq, test_seq) in user_splits.items():
         # pick the right sequence
         seq = {"train": train_seq, "val": val_seq, "test": test_seq}[split]
@@ -176,13 +178,15 @@ def build_examples(user_splits, global_movie_set, K=5, split="train"):
             continue
         for t in range(start, len(seq)):
             prefix = seq[:t]
+            negatives = sample_unseen(prefix, global_movie_set, K)
             examples.append({
                 "UserID": u,
                 "prefix": prefix,
                 "positive": seq[t],
-                "negatives": sample_unseen(prefix, global_movie_set, K)
+                "negatives": negatives
             })
-    return examples
+            already_picked_negatives.add(negatives)
+    return examples, already_picked_negatives
 
 
 # ─── 6. Padding & Masking ───────────────────────────────────────────────
