@@ -2,6 +2,8 @@ import random
 import numpy as np
 import torch
 
+from data_utils.preprocess import pad_sequences
+
 
 # ─── Metric Functions ───────────────────────────────────────────
 
@@ -90,7 +92,8 @@ def evaluate_ranking_model(
     candidate_size: int = 100,
     k: int = 10,
     negative_sampler=uniform_negative_sampler,
-    trials: int = 10
+    trials: int = 10,
+    model_type: str = 'mf'
 ) -> dict:
     """Evaluate a ranking model.
 
@@ -107,8 +110,10 @@ def evaluate_ranking_model(
                                                Defaults to uniform_negative_sampler.
         trials (int, optional): Number of trials for averaging. Defaults to 10.
 
+        model_type(str, optional): The Type of model for evaluation. Defaults to Matrix Factorization
     Returns:
         dict: Dictionary with averaged metrics: Hit@k, NDCG@k, MRR, MAP.
+
     """
     model.eval()
     all_hits, all_ndcgs, all_mrrs, all_aps = [], [], [], []
@@ -132,12 +137,23 @@ def evaluate_ranking_model(
             candidates = [pos_item] + negs
 
             # 4) Score all candidates in one forward pass
-            users_t = torch.tensor([user] * candidate_size, dtype=torch.long,
-                                device=device)
+
             items_t = torch.tensor(candidates, dtype=torch.long, device=device)
             with torch.no_grad():
-                scores = model(users_t, items_t).cpu().numpy()
-
+                if model_type == 'mf':
+                    users_t = torch.tensor([user] * candidate_size, dtype=torch.long,
+                                           device=device)
+                    scores = model(users_t, items_t).cpu().numpy()
+                elif model_type == 'sasr':
+                    users_t = torch.tensor([user], dtype=torch.long, device=device)
+                    example = [{
+                        'prefix': prefix
+                    }]
+                    example = pad_sequences(example)
+                    padded_prefix_t = torch.tensor(example[0]['padded_prefix'], dtype=torch.long, device=device).unsqueeze(0)
+                    seq = model(users_t, padded_prefix_t)
+                    encoded_next_seq = seq[:, -1, :]
+                    scores = model.get_scores(encoded_next_seq, items_t, users_t).cpu().numpy()
             # 5) Compute the rank of the positive item (index 0 before sorting)
             ranking = np.argsort(-scores)
             rank = np.where(ranking == 0)[0][0] + 1  # 1‑based
