@@ -162,7 +162,9 @@ def evaluate_DCNV2Model(
     candidate_size: int = 100,
     k: int = 10,
     negative_sampler=uniform_negative_sampler,
-    df: pd.DataFrame
+    users: pd.DataFrame,
+    movies: pd.DataFrame,
+    sparse_feature_info: any
 ) -> dict:
     """Evaluate a ranking model.
 
@@ -184,7 +186,7 @@ def evaluate_DCNV2Model(
     model.eval()
     hits, ndcgs, mrrs, aps = [], [], [], []
 
-    temp=0
+    temp = 0
     for user, (train_seq, val_seq, test_seq) in user_splits.items():
         if not test_seq:
             continue
@@ -194,7 +196,6 @@ def evaluate_DCNV2Model(
         pos_item = test_seq[0]
 
         # 2) Sample negatives
-        global_items = set(df['movie_id'].unique())
         negs = negative_sampler(prefix, global_items - {pos_item},
                                 candidate_size - 1)
 
@@ -202,59 +203,52 @@ def evaluate_DCNV2Model(
         candidates = [pos_item] + negs
 
         # 4) Score all candidates in one forward pass
-        users_t = torch.tensor([user] * candidate_size, dtype=torch.long,
-                               device=device)
         items_t = torch.tensor(candidates, dtype=torch.long, device=device)
         with torch.no_grad():
             #####################################################################################
-            # Main logic. 
-            df = df[(df['movie_id'].isin(items_t.tolist()))]
-            df = df.drop_duplicates(subset='movie_id', keep='first')
+            # Main logic.
+            # Filter required movie_id data and keep first one.
+            df = movies[(movies['MovieID'].isin(items_t.tolist()))].copy()
+            
 
-            df.loc[:,'uid']=user
+            df.loc[:,'UserID']=user
+            df['AgeEncoded'] = users.loc[users['UserID'] == user, 'AgeEncoded'].values[0]
+            df['GenderEncoded'] = users.loc[users['UserID'] == user, 'GenderEncoded'].values[0]
+            df['Zip-codeEncoded'] = users.loc[users['UserID'] == user, 'Zip-codeEncoded'].values[0]
+            df['Occupation'] = users.loc[users['UserID'] == user, 'Occupation'].values[0]
 
-            df.head()
-
-            # Sort on movie id in items_t
-            order = {v: i for i, v in enumerate(items_t)}
-            df['__key'] = df['movie_id'].map(order)
+            # To keep movie order same as in items_t.
+            order = {v: i for i, v in enumerate(items_t.cpu().tolist())}
+            df['__key'] = df['MovieID'].map(order)
             df = df.sort_values('__key').drop(columns='__key')
 
-            sparse_feature_info = {
-                # name: (vocab_size, embed_size)
-                "uid": (10000, 64),       # 10,000 users, 64-dim embedding
-                "movie_id": (5000, 64),        # 5,000 items, 64-dim embedding
-                # "age_sparse": (7, 8),        # 5,000 items, 64-dim embedding
-            }
             sparse_columns = sparse_feature_info.keys()
             X_sparse_input = {
-                name: torch.tensor(df[name].values)
+                name: torch.tensor(df[name].values, dtype=torch.int64, device=device)
                 for name, (a, b) in sparse_feature_info.items()
             }
-            target_column = 'rating'
+            target_column = 'Rating'
 
             # Generate dense input.
             dense_columns = list(set(df.columns) - set(sparse_columns) - {target_column})
 
-            X_sparse_input = X_sparse_input
-            X_dense_input = torch.tensor(df[dense_columns].values)
-
+            X_dense_input = torch.tensor(df[dense_columns].values, dtype=torch.int64, device=device)
             # end of main logic.
             #####################################################################
 
-            # scores = model(users_t, items_t).cpu().numpy()
             if temp==0:
-                # print("X_sparse_input: ", X_sparse_input.shape)
-                # print("X_dense_input: ", X_dense_input.shape)
-                print("X_sparse_input: ", X_sparse_input)
-                print("dense_columns: ", X_dense_input)
+                temp = 1
+                for name, tensor in X_sparse_input.items():
+                  print(f"Feature name: {name}")
+                  print(f"Tensor shape: {tensor.shape}")
+                  print(f"Device: {tensor.device}")
+                  print(tensor[:5])
+                print(X_dense_input.shape)
 
             scores = model(X_sparse_input, X_dense_input).cpu().numpy()
-
-            if temp==0:
-                print("scores: ", scores.shape)
-                print("scores: ", scores)
-            temp=temp+1
+            if temp==1:
+                temp = 2
+                print(scores)
         # 5) Compute the rank of the positive item (index 0 before sorting)
         ranking = np.argsort(-scores)
         rank = np.where(ranking == 0)[0][0] + 1  # 1‑based
@@ -272,6 +266,7 @@ def evaluate_DCNV2Model(
         "MRR": np.mean(mrrs),
         "MAP": np.mean(aps)
     }
+
 
 
 def evaluate_featureaware_model(
