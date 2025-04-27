@@ -26,9 +26,18 @@ class Trainer:
     def train_epoch(self):
         self.model.train()
         total_loss = 0
-        for sparse, dense, target in tqdm(self.train_loader):
-            # sparse = sparse.to(self.cfg.train.device)
-            sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+        for batch in tqdm(self.train_loader):
+            if len(batch) == 2:
+                # logic for (sparse, target)
+                sparse, target = batch
+                sparse = sparse.to(self.cfg.train.device)
+            elif len(batch) == 3:
+                # logic for (sparse, dense, target)
+                sparse, dense, target = batch
+                sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+            else:
+                raise ValueError(f"Unexpected batch size {len(batch)}")
+
             dense = dense.to(self.cfg.train.device)
             target = target.to(self.cfg.train.device)
 
@@ -53,9 +62,18 @@ class Trainer:
         self.metric_recall.reset()
         total_samples=0
         with torch.no_grad():
-            for sparse, dense, target in tqdm(self.val_loader):
-                # sparse = sparse.to(self.cfg.train.device)
-                sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+            for batch in tqdm(self.val_loader):
+                if len(batch) == 2:
+                    # logic for (sparse, target)
+                    sparse, target = batch
+                    sparse = sparse.to(self.cfg.train.device)
+                elif len(batch) == 3:
+                    # logic for (sparse, dense, target)
+                    sparse, dense, target = batch
+                    sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+                else:
+                    raise ValueError(f"Unexpected batch size {len(batch)}")
+        
                 dense = dense.to(self.cfg.train.device)
                 target = target.to(self.cfg.train.device)
 

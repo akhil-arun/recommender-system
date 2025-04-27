@@ -165,7 +165,6 @@ def build_examples(user_splits, global_movie_set, K=5, split="train"):
          - negatives: A list of K unseen movie_ids.
     """
     examples = []
-    global_movie_set = global_movie_set
     for u, (train_seq, val_seq, test_seq) in user_splits.items():
         # pick the right sequence
         seq = {"train": train_seq, "val": val_seq, "test": test_seq}[split]

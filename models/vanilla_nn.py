@@ -25,13 +25,12 @@ class TwoLayerNet(nn.Module):
         #                              END OF YOUR CODE                             #
         #############################################################################
 
-    def forward(self, sparse_input, dense_input):
+    def forward(self, x):
         out = None
         #############################################################################
         # TODO: Implement forward pass of the network                               #
         #############################################################################
 
-        x = dense_input
         x = self.flatten(x)
         out = self.stack(x)
         #############################################################################
