@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from data_utils.data_utils import set_seed
 from torchmetrics import AUROC, Accuracy, Precision, Recall
+import matplotlib.pyplot as plt
 
 class Trainer:
     def __init__(self, model, optimizer, cfg, train_loader, lr, val_loader=None):
@@ -18,6 +19,8 @@ class Trainer:
         self.metric_acc       = Accuracy(task="binary").to(self.device)
         self.metric_prec      = Precision(task="binary",average='macro', num_classes=2).to(self.device)
         self.metric_recall    = Recall(task="binary", average='macro', num_classes=2).to(self.device)
+        self.train_losses=[]
+        self.val_losses=[]
 
 
     def train_epoch(self):
@@ -37,7 +40,9 @@ class Trainer:
             self.optimizer.step()
 
             total_loss += loss.item()
-        return total_loss / len(self.train_loader)
+        avg_loss = total_loss / len(self.train_loader)
+        self.train_losses.append(avg_loss)
+        return avg_loss
 
     def evaluate(self):
         self.model.eval()
@@ -63,11 +68,13 @@ class Trainer:
                 self.metric_acc.update((pred >= 0.5), target)
                 self.metric_prec.update((pred >= 0.5), target)
                 self.metric_recall.update((pred >= 0.5), target)
+        decimals=4
         avg_loss   = total_loss / len(self.val_loader)
-        auc        = self.metric_auc.compute().item()
-        accuracy   = self.metric_acc.compute().item()
-        precision  = self.metric_prec.compute().item()
-        recall     = self.metric_recall.compute().item()
+        auc        = round(self.metric_auc.compute().item(), decimals)
+        accuracy   = round(self.metric_acc.compute().item(), decimals)
+        precision  = round(self.metric_prec.compute().item(), decimals)
+        recall     = round(self.metric_recall.compute().item(), decimals)
+        self.val_losses.append(avg_loss)
         return {
             'loss': avg_loss,
             'auc': auc,
@@ -83,3 +90,13 @@ class Trainer:
 
             if self.val_loader:
                 print(self.evaluate())
+        if self.val_loader:
+            plt.plot(self.train_losses, label="Train Loss")
+            plt.plot(self.val_losses, label="Val Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.ylim(0, 1)
+            plt.title("Training & Validation Loss for DCN-V2 Model")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
