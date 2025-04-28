@@ -1,0 +1,10 @@
+train:
+  lr: 1e-3
+  batch_size: 512
+  num_epochs: 5
+  device: "cpu"
+network:
+  model: dcn_v2_sequential
+  num_cross_layers: 3
+  hidden_dims: [128, 64, 32]
+  dropout: 0.4

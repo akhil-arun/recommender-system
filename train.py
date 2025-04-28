@@ -31,6 +31,6 @@ if config.network.model == 'nn':
 elif config.network.model == 'dcn_parallel':
     model = TwoLayerNet(input_dim=len(sparse_columns), hidden_size=784, num_classes=1)
 
-trainer = Trainer(model, config, loader, float(config.train.lr))
+trainer = Trainer(model, None, config, loader, float(config.train.lr))
 
 trainer.fit()

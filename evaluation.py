@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import torch
-
+import pandas as pd
 from data_utils.preprocess import pad_sequences
 
 
@@ -180,6 +180,121 @@ def evaluate_ranking_model(
         "MRR Std": np.std(all_mrrs),
         "MAP": np.mean(all_aps),
         "MAP Std": np.std(all_aps)
+    }
+
+
+def evaluate_DCNV2Model(
+    model: torch.nn.Module,
+    user_splits: dict,
+    global_items: set,
+    device: torch.device,
+    *,
+    candidate_size: int = 100,
+    k: int = 10,
+    negative_sampler=uniform_negative_sampler,
+    users: pd.DataFrame,
+    movies: pd.DataFrame,
+    sparse_feature_info: any
+) -> dict:
+    """Evaluate a ranking model.
+
+    Args:
+        model (torch.nn.Module): The trained recommender model.
+        user_splits (dict): Dictionary mapping users to (train_seq, val_seq,
+                            test_seq).
+        global_items (set): Full set of all item IDs.
+        device (torch.device): Device for inference.
+        candidate_size (int, optional): Total candidates = 1 pos +
+                                         (candidate_size-1) negs. Defaults to 100.
+        k (int, optional): Cutoff for Hit@k and NDCG@k. Defaults to 10.
+        negative_sampler (function, optional): Function to sample negative IDs.
+                                               Defaults to uniform_negative_sampler.
+
+    Returns:
+        dict: Dictionary with averaged metrics: Hit@k, NDCG@k, MRR, MAP.
+    """
+    model.eval()
+    hits, ndcgs, mrrs, aps = [], [], [], []
+
+    temp = 0
+    for user, (train_seq, val_seq, test_seq) in user_splits.items():
+        if not test_seq:
+            continue
+
+        # 1) Build the “prefix” and the held‑out positive item
+        prefix = train_seq + val_seq
+        pos_item = test_seq[0]
+
+        # 2) Sample negatives
+        negs = negative_sampler(prefix, global_items - {pos_item},
+                                candidate_size - 1)
+
+        # 3) Build candidate list
+        candidates = [pos_item] + negs
+
+        # 4) Score all candidates in one forward pass
+        items_t = torch.tensor(candidates, dtype=torch.long, device=device)
+        with torch.no_grad():
+            #####################################################################################
+            # Main logic.
+            # Filter required movie_id data and keep first one.
+            df = movies[(movies['MovieID'].isin(items_t.tolist()))].copy()
+            
+
+            df.loc[:,'UserID']=user
+            df['AgeEncoded'] = users.loc[users['UserID'] == user, 'AgeEncoded'].values[0]
+            df['GenderEncoded'] = users.loc[users['UserID'] == user, 'GenderEncoded'].values[0]
+            df['Zip-codeEncoded'] = users.loc[users['UserID'] == user, 'Zip-codeEncoded'].values[0]
+            df['Occupation'] = users.loc[users['UserID'] == user, 'Occupation'].values[0]
+
+            # To keep movie order same as in items_t.
+            order = {v: i for i, v in enumerate(items_t.cpu().tolist())}
+            df['__key'] = df['MovieID'].map(order)
+            df = df.sort_values('__key').drop(columns='__key')
+
+            sparse_columns = sparse_feature_info.keys()
+            X_sparse_input = {
+                name: torch.tensor(df[name].values, dtype=torch.int64, device=device)
+                for name, (a, b) in sparse_feature_info.items()
+            }
+            target_column = 'Rating'
+
+            # Generate dense input.
+            dense_columns = list(set(df.columns) - set(sparse_columns) - {target_column})
+
+            X_dense_input = torch.tensor(df[dense_columns].values, dtype=torch.int64, device=device)
+            # end of main logic.
+            #####################################################################
+
+            if temp==0:
+                temp = 1
+                for name, tensor in X_sparse_input.items():
+                  print(f"Feature name: {name}")
+                  print(f"Tensor shape: {tensor.shape}")
+                  print(f"Device: {tensor.device}")
+                  print(tensor[:5])
+                print(X_dense_input.shape)
+
+            scores = model(X_sparse_input, X_dense_input).cpu().numpy()
+            if temp==1:
+                temp = 2
+                print(scores)
+        # 5) Compute the rank of the positive item (index 0 before sorting)
+        ranking = np.argsort(-scores)
+        rank = np.where(ranking == 0)[0][0] + 1  # 1‑based
+
+        # 6) Accumulate metrics
+        hits.append(hit_at_k(rank, k))
+        ndcgs.append(ndcg_at_k(rank, k))
+        mrrs.append(mrr(rank))
+        aps.append(average_precision(rank))
+
+    # 7) Return average over all users
+    return {
+        f"Hit@{k}": np.mean(hits),
+        f"NDCG@{k}": np.mean(ndcgs),
+        "MRR": np.mean(mrrs),
+        "MAP": np.mean(aps)
     }
 
 

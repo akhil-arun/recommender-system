@@ -99,6 +99,25 @@ class FeatureAwareDeepMFDataset(Dataset):
         )
 
 
+
+class DCNV2Dataset(Dataset):
+    def __init__(self, sparse_input: dict, dense_input: torch.Tensor, labels: torch.Tensor):
+        self.sparse_input = sparse_input
+        self.dense_input = dense_input
+        self.labels = labels
+        self.keys = list(sparse_input.keys())
+        self.length = len(labels)
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        sparse = {key: self.sparse_input[key][idx] for key in self.keys}
+        dense = self.dense_input[idx]
+        label = self.labels[idx]
+        return sparse, dense, label
+
+
 class SASRTrainDataset(MFTrainDataset):
     """Dataset for training with user-item interactions.
 
@@ -131,3 +150,4 @@ class SASRTrainDataset(MFTrainDataset):
             torch.tensor(neg[0], dtype=torch.long),
             torch.tensor(padded_prefix, dtype=torch.long)
         )
+

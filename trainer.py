@@ -2,7 +2,8 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 from data_utils.data_utils import set_seed
-
+from torchmetrics import AUROC, Accuracy, Precision, Recall
+import matplotlib.pyplot as plt
 
 class Trainer:
     def __init__(self, model, optimizer, cfg, train_loader, lr, val_loader=None):
@@ -12,15 +13,35 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         set_seed(seed=42)
+        self.device = self.cfg.train.device
+        print("Trainer init device:", self.device)
+        self.metric_auc       = AUROC(task="binary").to(self.device)
+        self.metric_acc       = Accuracy(task="binary").to(self.device)
+        self.metric_prec      = Precision(task="binary",average='macro', num_classes=2).to(self.device)
+        self.metric_recall    = Recall(task="binary", average='macro', num_classes=2).to(self.device)
+        self.train_losses=[]
+        self.val_losses=[]
+
 
     def train_epoch(self):
         self.model.train()
         total_loss = 0
-        for sparse, target in tqdm(self.train_loader):
-            sparse = sparse.to(self.cfg.train.device)
+        for batch in tqdm(self.train_loader):
+            if len(batch) == 2:
+                # logic for (sparse, target)
+                sparse, target = batch
+                sparse = sparse.to(self.cfg.train.device)
+                pred = self.model(sparse)
+            elif len(batch) == 3:
+                # logic for (sparse, dense, target)
+                sparse, dense, target = batch
+                sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+                dense = dense.to(self.cfg.train.device)
+                pred = self.model(sparse, dense)
+            else:
+                raise ValueError(f"Unexpected batch size {len(batch)}")
+            
             target = target.to(self.cfg.train.device)
-
-            pred = self.model(sparse)
             loss = F.binary_cross_entropy(pred, target)
 
             self.optimizer.zero_grad()
@@ -28,20 +49,57 @@ class Trainer:
             self.optimizer.step()
 
             total_loss += loss.item()
-        return total_loss / len(self.train_loader)
+        avg_loss = total_loss / len(self.train_loader)
+        self.train_losses.append(avg_loss)
+        return avg_loss
 
     def evaluate(self):
         self.model.eval()
         total_loss = 0
+        self.metric_auc.reset()
+        self.metric_acc.reset()
+        self.metric_prec.reset()
+        self.metric_recall.reset()
+        total_samples=0
         with torch.no_grad():
-            for sparse, target in tqdm(self.train_loader):
-                sparse = sparse.to(self.cfg.train.device)
+            for batch in tqdm(self.val_loader):
+                if len(batch) == 2:
+                    # logic for (sparse, target)
+                    sparse, target = batch
+                    sparse = sparse.to(self.cfg.train.device)
+                    pred = self.model(sparse)
+                elif len(batch) == 3:
+                    # logic for (sparse, dense, target)
+                    sparse, dense, target = batch
+                    sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+                    dense = dense.to(self.cfg.train.device)
+                    pred = self.model(sparse, dense)
+                else:
+                    raise ValueError(f"Unexpected batch size {len(batch)}")
+              
                 target = target.to(self.cfg.train.device)
-
-                pred = self.model(sparse)
                 loss = F.binary_cross_entropy(pred, target)
                 total_loss += loss.item()
-        return total_loss / len(self.val_loader)
+
+                # update metrics
+                self.metric_auc.update(pred, target)
+                self.metric_acc.update((pred >= 0.5), target)
+                self.metric_prec.update((pred >= 0.5), target)
+                self.metric_recall.update((pred >= 0.5), target)
+        decimals=4
+        avg_loss   = total_loss / len(self.val_loader)
+        auc        = round(self.metric_auc.compute().item(), decimals)
+        accuracy   = round(self.metric_acc.compute().item(), decimals)
+        precision  = round(self.metric_prec.compute().item(), decimals)
+        recall     = round(self.metric_recall.compute().item(), decimals)
+        self.val_losses.append(avg_loss)
+        return {
+            'loss': avg_loss,
+            'auc': auc,
+            'accuracy': accuracy,
+            'precision': precision,
+            'recall': recall
+        }
 
     def fit(self):
         for epoch in range(self.cfg.train.num_epochs):
@@ -49,5 +107,14 @@ class Trainer:
             print(f"[Epoch {epoch + 1}] Train Loss: {train_loss:.4f}")
 
             if self.val_loader:
-                val_loss = self.evaluate()
-                print(f"[Epoch {epoch + 1}] Val Loss: {val_loss:.4f}")
+                print(self.evaluate())
+        if self.val_loader:
+            plt.plot(self.train_losses, label="Train Loss")
+            plt.plot(self.val_losses, label="Val Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.ylim(0, 1)
+            plt.title("Training & Validation Loss for DCN-V2 Model")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
