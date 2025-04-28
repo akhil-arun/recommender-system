@@ -15,18 +15,17 @@ class SASR(nn.Module):
         self.device = device
 
     def forward(self, users, prefix):
-        embedding_users = self.user_embeddings(users)
+        # embedding_users = self.user_embeddings(users)
         position_indices = torch.arange(prefix.shape[-1]).unsqueeze(0).expand(prefix.shape[0], -1).to(self.device)
         item_embeddings = self.item_embeddings(prefix) + self.positional_embeddings(position_indices)
-        embeddings = item_embeddings + embedding_users.unsqueeze(1)
+        embeddings = item_embeddings
         mask = nn.Transformer.generate_square_subsequent_mask(self.max_length).to(self.device)
 
         encoded = self.encoder(embeddings, mask=mask)
         return encoded
 
     def get_scores(self, encoded_seq_next, candidates, user):
-        embedding_users = self.user_embeddings(user)
-        context = encoded_seq_next + embedding_users
+        context = encoded_seq_next
         candidate_embeddings = self.item_embeddings(candidates)
         scores = torch.sum(context * candidate_embeddings, -1)
         return scores

@@ -67,7 +67,7 @@ def clean_and_filter(ratings, users, movies, rating_threshold=4):
     ratings = ratings[ratings["UserID"].isin(valid_ids)].copy()
     ratings["Datetime"] = pd.to_datetime(ratings["Timestamp"], unit="s")
     # Make MovieID and UserID into dense indices
-    movie2idx = {mid: i for i, mid in enumerate(sorted(movies["MovieID"].unique()))}
+    movie2idx = {mid: i + 1 for i, mid in enumerate(sorted(movies["MovieID"].unique()))}
     user2idx = {uid: i for i, uid in enumerate(sorted(users["UserID"].unique()))}
     movies["MovieID"] = movies["MovieID"].map(movie2idx)
     users["UserID"] = users["UserID"].map(user2idx)
@@ -110,6 +110,7 @@ def split_sequences(user_seqs, train_ratio=0.8, val_ratio=0.1):
     Returns:
         dict: A dictionary mapping user_id to (train, val, test) sequences.
     """
+
     def _split(seq):
         n = len(seq)
         if n < 3:
@@ -144,6 +145,24 @@ def sample_unseen(user_seq, global_movie_set, K=5):
     ret = random.sample(unseen, K) if len(unseen) >= K else unseen
     return [int(x) for x in ret]
 
+
+def get_all_movie_ids_for_split(user_splits):
+    """Randomly sample K movies not in user_seq.
+
+    Args:
+        user_splits (dict): A dictionary mapping user_id to (train, val, test) sequences.
+    Returns:
+        tuple: A tuple of sets of (train_set, val_set, test_set) which are all the movies in the respective splits.
+    """
+    train_set = set()
+    val_set = set()
+    test_set = set()
+    for user, (train_seq, val_seq, test_seq) in user_splits.items():
+        train_set |= set(train_seq)
+        val_set |= set(val_seq)
+        test_set |= set(test_set)
+
+    return train_set, val_set, test_set
 
 def build_examples(user_splits, global_movie_set, K=5, split="train"):
     """
