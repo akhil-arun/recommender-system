@@ -31,17 +31,17 @@ class Trainer:
                 # logic for (sparse, target)
                 sparse, target = batch
                 sparse = sparse.to(self.cfg.train.device)
+                pred = self.model(sparse)
             elif len(batch) == 3:
                 # logic for (sparse, dense, target)
                 sparse, dense, target = batch
                 sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+                dense = dense.to(self.cfg.train.device)
+                pred = self.model(sparse, dense)
             else:
                 raise ValueError(f"Unexpected batch size {len(batch)}")
-
-            dense = dense.to(self.cfg.train.device)
+            
             target = target.to(self.cfg.train.device)
-
-            pred = self.model(sparse, dense)
             loss = F.binary_cross_entropy(pred, target)
 
             self.optimizer.zero_grad()
@@ -67,17 +67,17 @@ class Trainer:
                     # logic for (sparse, target)
                     sparse, target = batch
                     sparse = sparse.to(self.cfg.train.device)
+                    pred = self.model(sparse)
                 elif len(batch) == 3:
                     # logic for (sparse, dense, target)
                     sparse, dense, target = batch
                     sparse = {k: v.to(self.cfg.train.device) for k, v in sparse.items()}
+                    dense = dense.to(self.cfg.train.device)
+                    pred = self.model(sparse, dense)
                 else:
                     raise ValueError(f"Unexpected batch size {len(batch)}")
-        
-                dense = dense.to(self.cfg.train.device)
+              
                 target = target.to(self.cfg.train.device)
-
-                pred = self.model(sparse, dense)
                 loss = F.binary_cross_entropy(pred, target)
                 total_loss += loss.item()
 
