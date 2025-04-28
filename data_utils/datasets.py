@@ -48,11 +48,13 @@ class MFTrainDataset(Dataset):
         user = ex["UserID"]
         pos = ex["positive"]
         neg = ex["negatives"][:self.num_negatives]  # e.g. [j₁, j₂, …]
+        padded_prefix = ex["padded_prefix"]
 
         # return as tensors for PyTorch
         return (
             torch.tensor(user, dtype=torch.long),
-            torch.tensor(pos,  dtype=torch.long),
+            torch.tensor(padded_prefix, dtype=torch.long),
+            torch.tensor(pos, dtype=torch.long),
             # just take the first negative
             torch.tensor(neg[0], dtype=torch.long)
         )
@@ -97,6 +99,7 @@ class FeatureAwareDeepMFDataset(Dataset):
         )
 
 
+
 class DCNV2Dataset(Dataset):
     def __init__(self, sparse_input: dict, dense_input: torch.Tensor, labels: torch.Tensor):
         self.sparse_input = sparse_input
@@ -113,4 +116,38 @@ class DCNV2Dataset(Dataset):
         dense = self.dense_input[idx]
         label = self.labels[idx]
         return sparse, dense, label
+
+
+class SASRTrainDataset(MFTrainDataset):
+    """Dataset for training with user-item interactions.
+
+    Attributes:
+        examples (list): A list of dicts, each containing user ID, positive
+            item, and sampled negative items.
+        num_negatives (int): The number of negative samples to return.
+    """
+
+    def __getitem__(self, idx):
+        """Fetches the training sample at the specified index.
+
+        Args:
+            idx (int): The index of the sample to retrieve.
+
+        Returns:
+            tuple: A tuple containing the user ID, positive item, and first
+                negative item as tensors.
+        """
+        ex = self.examples[idx]
+        user = ex["UserID"]
+        pos = ex["positive"]
+        neg = ex["negatives"][:self.num_negatives]  # e.g. [j₁, j₂, …]
+        padded_prefix = ex["padded_prefix"]
+        # return as tensors for PyTorch
+        return (
+            torch.tensor(user, dtype=torch.long),
+            torch.tensor(pos, dtype=torch.long),
+            # just take the first negative
+            torch.tensor(neg[0], dtype=torch.long),
+            torch.tensor(padded_prefix, dtype=torch.long)
+        )
 

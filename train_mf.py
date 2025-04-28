@@ -1,130 +1,101 @@
-import pandas as pd
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from sklearn.metrics import roc_auc_score
-from torch.utils.data import DataLoader
-from data_utils.data_utils import prepare_for_data_loader
 from tqdm import tqdm
 
-from models.matrix_factorization import BiasedMF
+from models.matrix_factorization import FeatureAwareDeepMF
 
 
-def additional_preprocess():
-    # Load the dataset
-    df = pd.read_csv("dataset.csv")
-    df = df.drop(columns=['Unnamed: 0'], errors='ignore')
-
-    # One-hot encoded to index
-    df['age_idx'] = df[['age_group_child', 'age_group_teen', 'age_group_adult', 'age_group_senior']].dot(np.array([0, 1, 2, 3]))
-    df['gender_idx'] = df[['gender_F', 'gender_M']].dot(np.array([0, 1]))
-    df['user_idx'] = df['uid'].astype("category").cat.codes
-    df['movie_idx'] = df['movie_id'].astype("category").cat.codes
-
-    # Genre columns
-    genre_cols = [col for col in df.columns if col not in ['uid', 'movie_id', 'rating', 'occupation', 'age_idx', 'gender_idx', 'user_idx', 'movie_idx']
-                and not col.startswith('age_group') and not col.startswith('gender_')]
+class MFTrainer:
+    def __init__(self, model, train_loader, val_loader, optimizer, epochs, device):
+        """"Initialize the MFTrainer"""
+        
+        self.model = model
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.optimizer = optimizer
+        self.epochs = epochs
+        self.device = device
     
-    return df, genre_cols
+    def criterion(self, pos_scores, neg_scores):
+        """BPR loss function"""
+        
+        return -(pos_scores - neg_scores).sigmoid().log().mean()
 
-def train(model, train_loader, criterion, optimizer):
-    model.train()
-    total_loss, correct, total = 0, 0, 0
-    for batch in tqdm(train_loader):
-        pred = model(*batch[:-1])
-        loss = criterion(pred, batch[-1])
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item()
-        class_pred = (torch.sigmoid(pred) >= 0.5).float()
-        correct += (class_pred == batch[-1]).sum().item()
-        total += len(batch[-1])
-    
-    return total_loss / len(train_loader), correct / total
-
-def evaluate(model, val_loader, criterion):
-    model.eval()
-    total_loss, correct, total = 0, 0, 0
-    all_logits, all_labels = [], []
-    
-    with torch.no_grad():
-        for batch in val_loader:
-            pred = model(*batch[:-1])
-            loss = criterion(pred, batch[-1])
-            total_loss += loss.item()
+    def train(self):
+        """Trains the model for one epoch"""
+        
+        self.model.train()
+        train_loss = 0
+        for batch in self.train_loader:
+            if isinstance(self.model, FeatureAwareDeepMF):
+                user, pos, neg, gender, occ, year_pos, year_neg, age, _, genre_pos, genre_neg = batch
             
-            probs = torch.sigmoid(pred)
-            class_pred = (probs >= 0.5).float()
-            correct += (class_pred == batch[-1]).sum().item()
-            total += len(batch[-1])
-            all_logits.append(probs.numpy())
-            all_labels.append(batch[-1].numpy())
-    
-    val_loss = total_loss / len(val_loader)
-    val_accuracy = correct / total
-    val_auc = roc_auc_score(np.concatenate(all_labels), np.concatenate(all_logits))
+                user, pos, neg = user.to(self.device), pos.to(self.device), neg.to(self.device)
+                gender, occ = gender.to(self.device), occ.to(self.device)
+                year_pos, year_neg = year_pos.to(self.device), year_neg.to(self.device)
+                age = age.to(self.device)
+                genre_pos, genre_neg = genre_pos.to(self.device), genre_neg.to(self.device)
 
-    return val_loss, val_accuracy, val_auc
-
-
-def main():
-    # Model parameters
-    BATCH_SIZE = 512
-    LR = 0.01
-    LATENT_DIM = 20
-    EPOCHS = 5
-    
-    # Preprocess the data
-    df, genre_cols = additional_preprocess()
-
-    # Prepare data loaders
-    train_dataset, val_dataset = prepare_for_data_loader(df, genre_cols)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
-    
-    num_users = df['user_idx'].nunique()
-    num_movies = df['movie_idx'].nunique()
-    num_age = 4
-    num_gender = 2
-    num_occ = df['occupation'].nunique()
-    num_genres = len(genre_cols)
-
-    model = BiasedMF(num_users, num_movies, num_age, num_gender, num_occ, num_genres, LATENT_DIM)
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LR)
-    
-
-    train_loss_history = []
-    train_acc_history = []
-    valid_loss_history = []
-    valid_acc_history = []
-    valid_auc_history = []
-
-    for epoch in range(EPOCHS):
-        train_loss, train_acc = train(model, train_loader, criterion, optimizer)
-        valid_loss, valid_acc, valid_auc = evaluate(model, val_loader, criterion)
-
-        print(f"Epoch {epoch+1}/{EPOCHS} - Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, "
-              f"Valid Loss: {valid_loss:.4f}, Valid Acc: {valid_acc:.4f}, Valid AUC: {valid_auc:.4f}")
+                pos_scores = self.model(user, pos, gender, occ, year_pos, age, genre_pos)
+                neg_scores = self.model(user, neg, gender, occ, year_neg, age, genre_neg)
+            
+            else:
+                user, pos, neg = batch
+                user, pos, neg = user.to(self.device), pos.to(self.device), neg.to(self.device)
+                pos_scores = self.model(user, pos)
+                neg_scores = self.model(user, neg)
+            
+            loss = self.criterion(pos_scores, neg_scores)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            train_loss += loss.item()
         
-        train_loss_history.append(train_loss)
-        train_acc_history.append(train_acc)
-        valid_loss_history.append(valid_loss)
-        valid_acc_history.append(valid_acc)
-        valid_auc_history.append(valid_auc)
+        return train_loss / len(self.train_loader)
+    
+    def evaluate(self):
+        """Evaluates the model on the validation set"""
         
-if __name__ == "__main__":
-    main()
-   
+        self.model.eval()
+        val_loss = 0
+        for batch in self.val_loader:
+            if isinstance(self.model, FeatureAwareDeepMF):
+                user, pos, neg, gender, occ, year_pos, year_neg, age, _, genre_pos, genre_neg = batch
+            
+                user, pos, neg = user.to(self.device), pos.to(self.device), neg.to(self.device)
+                gender, occ = gender.to(self.device), occ.to(self.device)
+                year_pos, year_neg = year_pos.to(self.device), year_neg.to(self.device)
+                age = age.to(self.device)
+                genre_pos, genre_neg = genre_pos.to(self.device), genre_neg.to(self.device)
 
+                pos_scores = self.model(user, pos, gender, occ, year_pos, age, genre_pos)
+                neg_scores = self.model(user, neg, gender, occ, year_neg, age, genre_neg)
+                
+            else:
+                user, pos, neg = batch
+                user, pos, neg = user.to(self.device), pos.to(self.device), neg.to(self.device)
+                pos_scores = self.model(user, pos)
+                neg_scores = self.model(user, neg)
 
+            loss = self.criterion(pos_scores, neg_scores)
+            val_loss += loss.item()
 
+        return val_loss / len(self.val_loader)
 
+    def fit(self):
+        """Trains and evals the model for N epochs"""
+        
+        train_losses, val_losses = [], []
+        for i in range(self.epochs):
+            train_loss = self.train()
+            train_losses.append(train_loss)
+            
+            val_loss = self.evaluate()
+            val_losses.append(val_loss)
+            
+            print(f"Epoch {i+1}/{self.epochs} | Train Loss: {train_loss:.4f}  | Val Loss: {val_loss:.4f}")
 
-
+        return train_losses, val_losses
 
 
