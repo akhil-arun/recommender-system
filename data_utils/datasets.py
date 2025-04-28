@@ -97,7 +97,7 @@ class FeatureAwareDeepMFDataset(Dataset):
         )
 
 
-class CustomDataset(Dataset):
+class DCNV2Dataset(Dataset):
     def __init__(self, sparse_input: dict, dense_input: torch.Tensor, labels: torch.Tensor):
         self.sparse_input = sparse_input
         self.dense_input = dense_input
